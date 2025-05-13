@@ -1,0 +1,82 @@
+import cv2
+import mediapipe as mp
+import pyautogui
+import numpy as np
+
+# Initialize webcam
+cam = cv2.VideoCapture(0)
+cam.set(3, 640)
+cam.set(4, 480)
+
+# Initialize MediaPipe FaceMesh
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True, max_num_faces=1)
+
+# Get screen size
+screen_w, screen_h = pyautogui.size()
+
+# Variables for click delay and smoothing
+click_delay = 0
+prev_x, prev_y = 0, 0
+movement_threshold = 15  # Minimum movement required to move the cursor
+
+# Eye landmark indices
+LEFT_IRIS = 474
+RIGHT_IRIS = 469
+LEFT_EYE_TOP = 159
+LEFT_EYE_BOTTOM = 145
+
+while True:
+    ret, frame = cam.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb_frame)
+    frame_h, frame_w, _ = frame.shape
+
+    if results.multi_face_landmarks:
+        landmarks = results.multi_face_landmarks[0].landmark
+
+        # Iris position (average of left and right)
+        eye_x = (landmarks[LEFT_IRIS].x + landmarks[RIGHT_IRIS].x) / 2
+        eye_y = (landmarks[LEFT_IRIS].y + landmarks[RIGHT_IRIS].y) / 2
+
+        x = int(eye_x * frame_w)
+        y = int(eye_y * frame_h)
+        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+
+        # Convert iris position to screen coordinates
+        screen_x = np.clip(np.interp(eye_x, [0.35, 0.65], [0, screen_w]), 0, screen_w)
+        screen_y = np.clip(np.interp(eye_y, [0.25, 0.55], [0, screen_h]), 0, screen_h)
+
+        # Move cursor if movement exceeds threshold
+        dist = np.hypot(screen_x - prev_x, screen_y - prev_y)
+        if dist > movement_threshold:
+            smooth_x = prev_x + (screen_x - prev_x) / 4
+            smooth_y = prev_y + (screen_y - prev_y) / 4
+            pyautogui.moveTo(smooth_x, smooth_y)
+            prev_x, prev_y = smooth_x, smooth_y
+
+        # Blink detection
+        eye_top_y = landmarks[LEFT_EYE_TOP].y
+        eye_bottom_y = landmarks[LEFT_EYE_BOTTOM].y
+        blink_ratio = abs(eye_top_y - eye_bottom_y)
+
+        if blink_ratio < 0.0035 and click_delay == 0:
+            pyautogui.click()
+            click_delay = 15
+
+    # Delay between blinks
+    if click_delay > 0:
+        click_delay -= 1
+
+    # Show webcam feed
+    cv2.imshow('Eye Controlled Mouse', frame)
+    if cv2.waitKey(1) == 27:  # ESC to exit
+        break
+
+# Cleanup
+cam.release()
+cv2.destroyAllWindows()
